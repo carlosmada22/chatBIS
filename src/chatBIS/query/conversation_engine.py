@@ -9,7 +9,7 @@ multiple interactions using LangGraph's state management and persistence.
 import logging
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, TypedDict, Annotated
+from typing import Dict, List, Optional, Tuple, TypedDict, Annotated, Any
 from datetime import datetime
 import uuid
 
@@ -20,6 +20,8 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 
 from .query import RAGQueryEngine
 from ..tools import PyBISToolManager
+from ..agents.intent_parser import create_intent_parser_agent
+from ..models.pybis_models import ActionRequest
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -46,6 +48,7 @@ class ConversationState(TypedDict):
     tool_action: Optional[Dict]  # Tool to execute and parameters
     tool_output: Optional[str]  # Result from tool execution
     final_response: str  # Final formatted response
+    parsed_intent: Optional[ActionRequest]  # Add this new field
 
 
 class ConversationEngine:
@@ -82,6 +85,13 @@ class ConversationEngine:
                 "Let me process that for you.",
                 "I'll execute the appropriate function to get that information."
             ])
+
+        # Initialize intent parser agent
+        try:
+            self.intent_parser = create_intent_parser_agent(self.llm)
+        except Exception as e:
+            logger.warning(f"Could not initialize intent parser agent: {e}")
+            self.intent_parser = None
 
         # Initialize memory/checkpointer
         import sqlite3
@@ -486,6 +496,59 @@ REASON: explanation why no tool is suitable"""
                 state["tool_output"] = f"Error executing function: {str(e)}"
                 return state
 
+        def parse_intent_node(state: ConversationState) -> ConversationState:
+            """Parse user intent into structured JSON using the IntentParserAgent."""
+            print("\n---STEP: PARSING USER INTENT---")
+            query = state['user_query']
+
+            if self.intent_parser is None:
+                print("---AGENT OUTPUT: INTENT PARSER NOT AVAILABLE---")
+                print("Intent parser agent could not be initialized (likely due to missing LLM support)")
+                print("Falling back to mock structured JSON output:")
+
+                # Create a mock ActionRequest for demonstration
+                from ..models.pybis_models import ActionRequest, ActionItem
+                mock_action = ActionItem(
+                    action="LIST",
+                    entity="OBJECT",
+                    criteria={"space": "DEMO"},
+                    fetch_options={"limit": 10}
+                )
+                parsed_intent = ActionRequest(actions=[mock_action])
+
+                json_output = parsed_intent.model_dump_json(indent=2)
+                print(json_output)
+                print("----------------------------------\n")
+
+                # Set the JSON as the tool_output so it gets displayed to the user
+                state["parsed_intent"] = parsed_intent
+                state["tool_output"] = f"Parsed Intent (JSON):\n{json_output}"
+                return state
+
+            try:
+                # The agent is invoked here
+                parsed_intent = self.intent_parser.invoke({"query": query})
+
+                # --- VERIFICATION STEP ---
+                # Print the output to the console for verification
+                print("---AGENT OUTPUT: PARSED INTENT---")
+                json_output = parsed_intent.model_dump_json(indent=2)
+                print(json_output)
+                print("----------------------------------\n")
+
+                # Set the JSON as the tool_output so it gets displayed to the user
+                state["parsed_intent"] = parsed_intent
+                state["tool_output"] = f"Parsed Intent (JSON):\n{json_output}"
+                return state
+
+            except Exception as e:
+                print(f"---ERROR IN INTENT PARSING: {e}---")
+                print("----------------------------------\n")
+                error_msg = f"Error parsing intent: {str(e)}"
+                state["parsed_intent"] = None
+                state["tool_output"] = error_msg
+                return state
+
         def format_response(state: ConversationState) -> ConversationState:
             """Format the final response based on the agent that processed the query."""
             try:
@@ -536,7 +599,7 @@ REASON: explanation why no tool is suitable"""
         # Add nodes for multi-agent architecture
         workflow.add_node("router", router_agent)
         workflow.add_node("rag_agent", rag_agent)
-        workflow.add_node("function_calling_agent", function_calling_agent)
+        workflow.add_node("parse_intent", parse_intent_node)
         workflow.add_node("format_response", format_response)
         workflow.add_node("update_conversation", update_conversation)
 
@@ -545,7 +608,7 @@ REASON: explanation why no tool is suitable"""
             """Route based on the router's decision."""
             decision = state.get("decision", "rag")
             if decision == "function_call":
-                return "function_calling_agent"
+                return "parse_intent"
             else:
                 return "rag_agent"
 
@@ -556,11 +619,11 @@ REASON: explanation why no tool is suitable"""
             route_decision,
             {
                 "rag_agent": "rag_agent",
-                "function_calling_agent": "function_calling_agent"
+                "parse_intent": "parse_intent"
             }
         )
         workflow.add_edge("rag_agent", "format_response")
-        workflow.add_edge("function_calling_agent", "format_response")
+        workflow.add_edge("parse_intent", "format_response")
         workflow.add_edge("format_response", "update_conversation")
         workflow.add_edge("update_conversation", END)
 
@@ -613,7 +676,8 @@ REASON: explanation why no tool is suitable"""
                     decision="",
                     tool_action=None,
                     tool_output=None,
-                    final_response=""
+                    final_response="",
+                    parsed_intent=None
                 )
             else:
                 # Create new conversation state
@@ -627,7 +691,8 @@ REASON: explanation why no tool is suitable"""
                     decision="",
                     tool_action=None,
                     tool_output=None,
-                    final_response=""
+                    final_response="",
+                    parsed_intent=None
                 )
         except Exception:
             # Fallback to new state if there's an issue loading existing state
@@ -641,7 +706,8 @@ REASON: explanation why no tool is suitable"""
                 decision="",
                 tool_action=None,
                 tool_output=None,
-                final_response=""
+                final_response="",
+                parsed_intent=None
             )
 
         try:

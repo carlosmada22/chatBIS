@@ -138,57 +138,58 @@ class RAGQueryEngine:
         Returns:
             A list of the most relevant chunks
         """
-        # Check for special case queries first
-        collection_query = ("collection" in query.lower() or "collections" in query.lower()) and ("create" in query.lower() or "register" in query.lower() or "new" in query.lower() or "add" in query.lower() or "make" in query.lower())
+        #### SPECIAL CASE EXAMPLE FOR COLLECTION CREATION QUERIES
+        # # Check for special case queries first
+        # collection_query = ("collection" in query.lower() or "collections" in query.lower()) and ("create" in query.lower() or "register" in query.lower() or "new" in query.lower() or "add" in query.lower() or "make" in query.lower())
 
-        # If this is a collection creation query, first try to find the exact chunk
-        if collection_query:
-            # Look specifically for the Lab Notebook chunk with Register a Collection section
-            for chunk in self.chunks:
-                if "register a collection" in chunk["content"].lower() and chunk["title"].lower() == "lab notebook":
-                    # Found the exact chunk, return it as the first result
-                    # Then get the rest of the results normally
-                    logger.info("Found exact chunk for collection creation query")
+        # # If this is a collection creation query, first try to find the exact chunk
+        # if collection_query:
+        #     # Look specifically for the Lab Notebook chunk with Register a Collection section
+        #     for chunk in self.chunks:
+        #         if "register a collection" in chunk["content"].lower() and chunk["title"].lower() == "lab notebook":
+        #             # Found the exact chunk, return it as the first result
+        #             # Then get the rest of the results normally
+        #             logger.info("Found exact chunk for collection creation query")
 
-                    # Generate an embedding for the query
-                    query_embedding = self.generate_embedding(query)
+        #             # Generate an embedding for the query
+        #             query_embedding = self.generate_embedding(query)
 
-                    # Extract keywords from the query
-                    keywords = self._extract_keywords(query.lower())
+        #             # Extract keywords from the query
+        #             keywords = self._extract_keywords(query.lower())
 
-                    # Calculate the similarity between the query and each chunk
-                    similarities = []
-                    for c in self.chunks:
-                        if c["content"] == chunk["content"]:
-                            continue  # Skip the exact chunk we already found
+        #             # Calculate the similarity between the query and each chunk
+        #             similarities = []
+        #             for c in self.chunks:
+        #                 if c["content"] == chunk["content"]:
+        #                     continue  # Skip the exact chunk we already found
 
-                        # Semantic similarity using embeddings
-                        c_embedding = c["embedding"]
-                        semantic_similarity = cosine_similarity([query_embedding], [c_embedding])[0][0]
+        #                 # Semantic similarity using embeddings
+        #                 c_embedding = c["embedding"]
+        #                 semantic_similarity = cosine_similarity([query_embedding], [c_embedding])[0][0]
 
-                        # Keyword-based similarity
-                        keyword_similarity = 0.0
-                        content_lower = c["content"].lower()
-                        for keyword in keywords:
-                            if keyword in content_lower:
-                                keyword_similarity += 0.2  # Boost for each keyword found
+        #                 # Keyword-based similarity
+        #                 keyword_similarity = 0.0
+        #                 content_lower = c["content"].lower()
+        #                 for keyword in keywords:
+        #                     if keyword in content_lower:
+        #                         keyword_similarity += 0.2  # Boost for each keyword found
 
-                        # Special case for section headings that match the query
-                        if query.lower() in content_lower or any(keyword in content_lower for keyword in keywords):
-                            # Only boost if the query or keywords are actually in the content
-                            keyword_similarity += 0.3  # Moderate boost for relevant content
+        #                 # Special case for section headings that match the query
+        #                 if query.lower() in content_lower or any(keyword in content_lower for keyword in keywords):
+        #                     # Only boost if the query or keywords are actually in the content
+        #                     keyword_similarity += 0.3  # Moderate boost for relevant content
 
-                        # Combine similarities (weighted average)
-                        combined_similarity = (semantic_similarity * 0.7) + (keyword_similarity * 0.3)
-                        similarities.append((c, combined_similarity))
+        #                 # Combine similarities (weighted average)
+        #                 combined_similarity = (semantic_similarity * 0.7) + (keyword_similarity * 0.3)
+        #                 similarities.append((c, combined_similarity))
 
-                    # Sort the chunks by similarity (descending)
-                    similarities.sort(key=lambda x: x[1], reverse=True)
+        #             # Sort the chunks by similarity (descending)
+        #             similarities.sort(key=lambda x: x[1], reverse=True)
 
-                    # Return the exact chunk plus the top_k-1 most similar chunks
-                    return [chunk] + [c for c, _ in similarities[:top_k - 1]]
+        #             # Return the exact chunk plus the top_k-1 most similar chunks
+        #             return [chunk] + [c for c, _ in similarities[:top_k - 1]]
 
-        # For all other queries, use the normal similarity-based approach
+        # # For all other queries, use the normal similarity-based approach
         # Generate an embedding for the query
         query_embedding = self.generate_embedding(query)
 

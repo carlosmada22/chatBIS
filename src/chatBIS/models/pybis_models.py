@@ -19,11 +19,17 @@ class Criteria(BaseModel):
     type: Optional[str] = Field(None, description="The entity type code (e.g., 'YEAST').")
     where: Optional[Dict[str, Any]] = Field(None, description="A dictionary for advanced property/attribute filters, e.g., {'registrationDate': '>2024-01-01'}.")
 
+class SortInstruction(BaseModel):
+    """Defines how to sort by a single field."""
+    field: str = Field(..., description="The field to sort by, e.g., 'registrationDate' or 'code'.")
+    order: Literal["asc", "desc"] = Field("desc", description="The sort order, ascending or descending.")
+
 class FetchOptions(BaseModel):
     """Parameters that control the data returned by the query."""
     properties: Optional[List[str]] = Field(None, description="Specific properties to return. Use ['*'] for all properties.")
     attributes: Optional[List[str]] = Field(None, description="Specific attributes to return (e.g., ['parents', 'children']).")
     limit: Optional[int] = Field(None, description="The maximum number of results to return.")
+    sort_by: Optional[List[SortInstruction]] = Field(None, description="A list of instructions on how to sort the results.")
 
 class ActionItem(BaseModel):
     """A single, complete action to be performed."""

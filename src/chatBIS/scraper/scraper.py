@@ -252,7 +252,7 @@ class ReadTheDocsScraper:
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(f"Title: {content['title']}\n")
             f.write(f"URL: {content['url']}\n")
-            f.write(f"---\n\n")
+            f.write("---\n\n")
             f.write(content["content"])
         
         logger.info(f"Saved content to {filepath}")
