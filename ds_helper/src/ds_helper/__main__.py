@@ -27,7 +27,7 @@ DEFAULT_PROCESSED_DIR = os.path.join(DEFAULT_DATA_DIR, "processed")
 DEFAULT_VECTORDB_PATH = os.path.join(os.getcwd(), "ds_helper_vectordb")
 DEFAULT_OPENBIS_URL = "https://openbis.readthedocs.io/en/20.10.0-11/"
 DEFAULT_WIKIJS_URL = "https://datastore.bam.de/en/home"  # This should be configured by user
-DEFAULT_MAX_PAGES = 50
+DEFAULT_MAX_PAGES = None  # No limit - scrape all pages
 
 
 def run_full_pipeline():
@@ -47,12 +47,16 @@ def run_full_pipeline():
         rtd_output_dir = os.path.join(DEFAULT_RAW_DIR, "openbis")
         os.makedirs(rtd_output_dir, exist_ok=True)
         
-        scraper_args = scraper_parse_args([
+        scraper_args_list = [
             "readthedocs",
             "--url", DEFAULT_OPENBIS_URL,
             "--output", rtd_output_dir,
-            "--max-pages", str(DEFAULT_MAX_PAGES)
-        ])
+            "--verbose"
+        ]
+        if DEFAULT_MAX_PAGES is not None:
+            scraper_args_list += ["--max-pages", str(DEFAULT_MAX_PAGES)]
+
+        scraper_args = scraper_parse_args(scraper_args_list)
         
         scraper_result = scraper_run(scraper_args)
         if scraper_result != 0:
@@ -60,24 +64,28 @@ def run_full_pipeline():
             return scraper_result
 
         # Step 2: Scrape Wiki.js (if URL is provided)
-        if DEFAULT_WIKIJS_URL != "https://datastore.bam.de/en/home":
+        if DEFAULT_WIKIJS_URL == "https://datastore.bam.de/en/home":
             logger.info(f"Scraping Wiki.js from {DEFAULT_WIKIJS_URL}...")
             wiki_output_dir = os.path.join(DEFAULT_RAW_DIR, "wikijs")
             os.makedirs(wiki_output_dir, exist_ok=True)
             
-            scraper_args = scraper_parse_args([
-                "wikijs",
-                "--url", DEFAULT_WIKIJS_URL,
-                "--output", wiki_output_dir,
-                "--max-pages", str(DEFAULT_MAX_PAGES)
-            ])
+            scraper_args_list = [
+                "readthedocs",
+                "--url", DEFAULT_OPENBIS_URL,
+                "--output", rtd_output_dir,
+                "--verbose"
+            ]
+            if DEFAULT_MAX_PAGES is not None:
+                scraper_args_list += ["--max-pages", str(DEFAULT_MAX_PAGES)]
+
+            scraper_args = scraper_parse_args(scraper_args_list)
             
             scraper_result = scraper_run(scraper_args)
             if scraper_result != 0:
                 logger.error("Wiki.js scraping failed.")
                 return scraper_result
         else:
-            logger.warning("Wiki.js URL not configured. Skipping Wiki.js scraping.")
+            logger.warning("Wiki.js URL not correct. Skipping Wiki.js scraping.")
             logger.warning("Please set the Wiki.js URL in the configuration or use individual commands.")
 
         # Step 3: Process all scraped content

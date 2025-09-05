@@ -313,21 +313,23 @@ class MultiSourceRAGProcessor:
 
     def process_all_files(self) -> List[Dict]:
         """
-        Process all files in the input directory.
+        Process all files in the input directory and subdirectories.
 
         Returns:
             A list of dictionaries containing all processed chunks
         """
         all_chunks = []
 
-        # Find all text files in the input directory
-        for file_path in self.input_dir.glob("*.txt"):
+        # Find all text files in the input directory and subdirectories
+        for file_path in self.input_dir.rglob("*.txt"):  # Use rglob for recursive search
             try:
                 chunks = self.process_file(file_path)
                 all_chunks.extend(chunks)
+                logger.debug(f"Processed {file_path}: {len(chunks)} chunks")
             except Exception as e:
                 logger.error(f"Error processing {file_path}: {e}")
 
+        logger.info(f"Found and processed {len(all_chunks)} total chunks from all files")
         return all_chunks
 
     def save_processed_data(self, chunks: List[Dict]) -> None:

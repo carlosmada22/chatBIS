@@ -27,12 +27,16 @@ class WikiJSParser:
     def __init__(self):
         """Initialize the parser."""
         self.content_selectors = [
+            "main",  # HTML5 main element (most common)
             "div.v-content__wrap",  # Wiki.js main content wrapper
             "div.page-content",  # Alternative content div
             "main.v-content",  # Main content element
             "article",  # HTML5 article element
             "div.content",  # Generic content div
             "div.wiki-content",  # Wiki-specific content div
+            "div.container",  # Container div
+            "div.v-container",  # Vuetify container
+            "body",  # Fallback to body if nothing else works
         ]
         
         self.ignore_selectors = [
@@ -89,25 +93,62 @@ class WikiJSParser:
         
         # Find the main content
         content_element = None
+        content_text = ""
+
         for selector in self.content_selectors:
             content_element = soup.select_one(selector)
             if content_element:
-                break
+                # Test if this element has substantial text content
+                test_text = content_element.get_text(strip=True)
+                if len(test_text) > 100:  # Only accept if it has substantial content
+                    content_text = test_text
+                    logger.debug(f"Found content using selector '{selector}': {len(content_text)} characters")
+                    break
+                else:
+                    logger.debug(f"Selector '{selector}' found element but content too short: {len(test_text)} characters")
+
+        if not content_text:
+            logger.warning(f"Could not find substantial content in {url}")
+            # As a fallback, try to get all text from body
+            body = soup.find('body')
+            if body:
+                content_text = body.get_text(strip=True)
+                logger.debug(f"Using body fallback: {len(content_text)} characters")
+
+            if not content_text:
+                return {"title": title, "content": "", "url": url}
         
-        if not content_element:
-            logger.warning(f"Could not find main content in {url}")
-            return {"title": title, "content": "", "url": url}
-        
-        # Remove elements to ignore
-        for selector in self.ignore_selectors:
-            for element in content_element.select(selector):
-                element.decompose()
-        
-        # Extract text content
-        content = self._extract_text_with_structure(content_element)
-        
+        # If we have a content element, clean it up and extract structured text
+        if content_element:
+            # Remove elements to ignore
+            for selector in self.ignore_selectors:
+                for element in content_element.select(selector):
+                    element.decompose()
+
+            # Extract text content with structure
+            content = self._extract_text_with_structure(content_element)
+        else:
+            # Use the raw text content we found
+            content = self._clean_text(content_text)
+
         return {"title": title, "content": content, "url": url}
-    
+
+    def _clean_text(self, text: str) -> str:
+        """
+        Clean raw text content.
+
+        Args:
+            text: The raw text to clean
+
+        Returns:
+            Cleaned text
+        """
+        # Remove excessive whitespace
+        text = re.sub(r'\s+', ' ', text)
+        # Remove leading/trailing whitespace
+        text = text.strip()
+        return text
+
     def _extract_text_with_structure(self, element) -> str:
         """
         Extract text from an element while preserving some structure.

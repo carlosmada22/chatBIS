@@ -308,17 +308,24 @@ class ReadTheDocsScraper:
                 for link in soup.find_all("a", href=True):
                     href = link["href"]
 
-                    # Skip empty links
-                    if not href:
+                    # Skip empty links and anchors
+                    if not href or href.startswith("#"):
                         continue
 
-                    # Convert relative URLs to absolute URLs
-                    if not href.startswith(("http://", "https://")):
-                        href = urljoin(url, href)
+                    # Always join with the base URL, stripping any leading slashes
+                    fixed_href = urljoin(
+                        self.base_url + "/", 
+                        href.lstrip("/")
+                    )
+
+                    # Ensure the URL starts with the correct base
+                    if not fixed_href.startswith(self.base_url):
+                        continue
 
                     # Check if the URL is valid
-                    if self._is_valid_url(href):
-                        self.urls_to_visit.append(href)
+                    if self._is_valid_url(fixed_href):
+                        self.urls_to_visit.append(fixed_href)
+                        logger.debug(f"Added URL to queue: {fixed_href}")
 
                 # Add delay between requests
                 if self.delay > 0:
