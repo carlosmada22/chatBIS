@@ -6,9 +6,14 @@ Command-line interface for DS Helper scrapers.
 import argparse
 import logging
 import sys
+from pathlib import Path
 
-from .readthedocs_scraper import ReadTheDocsScraper
-from .wikijs_scraper import WikiJSScraper
+# Adjust the path to correctly import the scraper modules
+# This assumes cli.py is in ds_helper/scraper/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from readthedocs_scraper import ReadTheDocsScraper
+from wikijs_scraper import WikiJSScraper
 
 # Configure logging
 logging.basicConfig(
@@ -23,13 +28,12 @@ def parse_args(args=None):
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Scrape content from documentation sites.")
     
-    subparsers = parser.add_subparsers(dest="scraper_type", help="Type of scraper to use")
+    subparsers = parser.add_subparsers(dest="scraper_type", required=True, help="Type of scraper to use")
     
     # ReadTheDocs scraper
     rtd_parser = subparsers.add_parser("readthedocs", help="Scrape ReadTheDocs site")
     rtd_parser.add_argument("--url", required=True, help="The base URL of the ReadtheDocs site")
     rtd_parser.add_argument("--output", required=True, help="The directory to save the scraped content to")
-    rtd_parser.add_argument("--version", help="The specific version to scrape (e.g., 'en/latest')")
     rtd_parser.add_argument("--delay", type=float, default=0.5, help="The delay between requests in seconds")
     rtd_parser.add_argument("--max-pages", type=int, help="The maximum number of pages to scrape")
     rtd_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
@@ -38,7 +42,7 @@ def parse_args(args=None):
     wiki_parser = subparsers.add_parser("wikijs", help="Scrape Wiki.js site")
     wiki_parser.add_argument("--url", required=True, help="The base URL of the Wiki.js site")
     wiki_parser.add_argument("--output", required=True, help="The directory to save the scraped content to")
-    wiki_parser.add_argument("--delay", type=float, default=0.5, help="The delay between requests in seconds")
+    wiki_parser.add_argument("--delay", type=float, default=1.0, help="The delay between requests in seconds")
     wiki_parser.add_argument("--max-pages", type=int, help="The maximum number of pages to scrape")
     wiki_parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
@@ -47,47 +51,41 @@ def parse_args(args=None):
 
 def run_with_args(args):
     """Run the scraper with the given arguments."""
-    # Set logging level
     if args.verbose:
-        logger.setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.DEBUG)
 
     try:
+        scraper = None
         if args.scraper_type == "readthedocs":
-            # Create and run the ReadTheDocs scraper
             scraper = ReadTheDocsScraper(
                 base_url=args.url,
                 output_dir=args.output,
-                target_version=args.version,
                 delay=args.delay,
                 max_pages=args.max_pages
             )
         elif args.scraper_type == "wikijs":
-            # Create and run the Wiki.js scraper
             scraper = WikiJSScraper(
                 base_url=args.url,
                 output_dir=args.output,
                 delay=args.delay,
                 max_pages=args.max_pages
             )
+        
+        if scraper:
+            scraper.scrape()
+            return 0
         else:
-            logger.error("Invalid scraper type. Use 'readthedocs' or 'wikijs'.")
+            logger.error("Invalid scraper type specified.")
             return 1
 
-        scraper.scrape()
-        return 0
     except Exception as e:
-        logger.error(f"Error during scraping: {e}")
+        logger.error(f"An error occurred during scraping: {e}", exc_info=True)
         return 1
 
 
 def main():
-    """Main entry point for the script."""
+    """Main entry point for the CLI script."""
     args = parse_args()
-    
-    if not args.scraper_type:
-        print("Please specify a scraper type: 'readthedocs' or 'wikijs'")
-        return 1
-    
     return run_with_args(args)
 
 

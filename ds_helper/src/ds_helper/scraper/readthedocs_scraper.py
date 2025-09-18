@@ -11,15 +11,15 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 
 # Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 
 class ReadTheDocsParser:
     """Parser for ReadtheDocs HTML content."""
@@ -42,8 +42,6 @@ class ReadTheDocsParser:
             "div.related",  # Related links
             "div.breadcrumbs",  # Breadcrumbs
             "div.sourcelink",  # Source link
-            "div.highlight-default",  # Code blocks (we'll handle these separately)
-            "div.admonition",  # Admonitions (notes, warnings, etc.)
         ]
 
     def extract_content(self, html_content: str, url: str) -> Dict[str, str]:
@@ -59,15 +57,15 @@ class ReadTheDocsParser:
         """
         soup = BeautifulSoup(html_content, "html.parser")
         
-        # Extract the title
-        title = soup.title.string if soup.title else ""
-        title = title.replace(" — ", " - ").strip()
+        title = ""
+        # Extract title from h1 if possible, fallback to title tag
+        h1 = soup.find("h1")
+        if h1:
+            title = h1.get_text(strip=True)
+        elif soup.title:
+            title = soup.title.string
+            title = re.sub(r'\s*—.*$', '', title).strip() # Clean up RTD titles
         
-        # Try to find a more specific title
-        if soup.find("h1"):
-            title = soup.find("h1").get_text().strip()
-        
-        # Find the main content
         content_element = None
         for selector in self.content_selectors:
             content_element = soup.select_one(selector)
@@ -78,60 +76,14 @@ class ReadTheDocsParser:
             logger.warning(f"Could not find main content in {url}")
             return {"title": title, "content": "", "url": url}
         
-        # Remove elements to ignore
         for selector in self.ignore_selectors:
             for element in content_element.select(selector):
                 element.decompose()
         
-        # Extract text content
-        content = self._extract_text_with_structure(content_element)
+        # Use a simpler, more robust text extraction
+        content = content_element.get_text(separator='\n', strip=True)
         
         return {"title": title, "content": content, "url": url}
-    
-    def _extract_text_with_structure(self, element) -> str:
-        """
-        Extract text from an element while preserving some structure.
-        
-        Args:
-            element: The BeautifulSoup element to extract text from
-            
-        Returns:
-            The extracted text with some structure preserved
-        """
-        if element.name in ["pre", "code"]:
-            # For code blocks, preserve formatting
-            return f"\n```\n{element.get_text()}\n```\n"
-        
-        if element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-            # For headings, add appropriate markdown
-            level = int(element.name[1])
-            return f"\n{'#' * level} {element.get_text().strip()}\n"
-        
-        if element.name == "p":
-            # For paragraphs, ensure they're separated by newlines
-            return f"\n{element.get_text().strip()}\n"
-        
-        if element.name == "li":
-            # For list items, add a bullet point
-            return f"- {element.get_text().strip()}\n"
-        
-        if element.name == "table":
-            # For tables, we'll just extract the text for now
-            return f"\n{element.get_text().strip()}\n"
-        
-        # Recursively process child elements
-        if hasattr(element, "children"):
-            result = ""
-            for child in element.children:
-                if hasattr(child, "name"):
-                    result += self._extract_text_with_structure(child)
-                elif child.string and child.string.strip():
-                    result += child.string
-            return result
-        
-        # If it's just a string, return it
-        return element.string if element.string else ""
-
 
 class ReadTheDocsScraper:
     """Scraper for ReadtheDocs documentation sites."""
@@ -140,202 +92,125 @@ class ReadTheDocsScraper:
         self,
         base_url: str,
         output_dir: str,
-        target_version: Optional[str] = None,
         delay: float = 0.5,
         max_pages: Optional[int] = None
     ):
-        """
-        Initialize the scraper.
-
-        Args:
-            base_url: The base URL of the ReadtheDocs site
-            output_dir: The directory to save the scraped content to
-            target_version: The specific version to scrape (e.g., 'en/latest')
-            delay: The delay between requests in seconds
-            max_pages: The maximum number of pages to scrape (None for unlimited)
-        """
-        self.base_url = self._sanitize_url(base_url)
+        ### REVISED: Simplified __init__
+        self.start_url = base_url
         self.output_dir = Path(output_dir)
-        self.target_version = target_version
         self.delay = delay
         self.max_pages = max_pages
 
         self.visited_urls: Set[str] = set()
-        self.urls_to_visit: List[str] = [self.base_url]
+        self.urls_to_visit: List[str] = [self.start_url]
         self.parser = ReadTheDocsParser()
 
-        # Create the output directory
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Extract the domain for URL filtering
-        self.domain = urlparse(self.base_url).netloc
-
-        logger.info(f"Initialized scraper for {self.base_url}")
-        logger.info(f"Output directory: {self.output_dir}")
-        if self.target_version:
-            logger.info(f"Target version: {self.target_version}")
-    
-    def _sanitize_url(self, url: str) -> str:
-        """
-        Sanitize the URL to ensure it's properly formatted.
+        # The base path for ensuring we stay on the same documentation version
+        self.base_path = self._get_base_path(self.start_url)
         
-        Args:
-            url: The URL to sanitize
+        logger.info(f"Initialized scraper for {self.start_url}")
+        logger.info(f"Scraping will be contained to base path: {self.base_path}")
+
+    ### NEW: Helper function to correctly identify the base directory
+    def _get_base_path(self, url: str) -> str:
+        """Gets the base directory of a URL, removing the filename."""
+        parsed = urlparse(url)
+        # Rebuild the URL without the filename part of the path
+        path_parts = parsed.path.split('/')
+        if '.' in path_parts[-1]: # Check if the last part is a file
+            base_path = '/'.join(path_parts[:-1]) + '/'
+        else:
+            base_path = parsed.path
             
-        Returns:
-            The sanitized URL
-        """
-        if not url.startswith(("http://", "https://")):
-            url = f"https://{url}"
-        
-        # Remove trailing slash
-        url = url.rstrip("/")
-        
-        return url
-    
+        return urljoin(url, base_path)
+
     def _is_valid_url(self, url: str) -> bool:
-        """
-        Check if a URL is valid for scraping.
+        """Check if a URL is valid for scraping."""
+        # Clean fragments (#) from URL for comparison
+        url_clean = urljoin(url, urlparse(url).path)
 
-        Args:
-            url: The URL to check
-
-        Returns:
-            True if the URL is valid, False otherwise
-        """
-        # Skip if already visited
-        if url in self.visited_urls:
+        if url_clean in self.visited_urls:
             return False
 
-        # Skip if not from the same domain
-        parsed_url = urlparse(url)
-        if parsed_url.netloc != self.domain:
+        # Ensure we stay within the same documentation version/directory
+        if not url_clean.startswith(self.base_path):
             return False
 
         # Skip common non-content URLs
-        skip_patterns = [
-            r'/_static/',
-            r'/_sources/',
-            r'/genindex\.html',
-            r'/search\.html',
-            r'/py-modindex\.html',
-            r'\.pdf$',
-            r'\.zip$',
-            r'\.tar\.gz$',
-            r'\.jpg$',
-            r'\.png$',
-            r'\.gif$',
-            r'\.css$',
-            r'\.js$',
-            r'#',  # Skip anchor links
-        ]
-
+        skip_patterns = [r'/genindex', r'/search', r'/py-modindex']
         for pattern in skip_patterns:
-            if re.search(pattern, url, re.IGNORECASE):
+            if re.search(pattern, url_clean):
                 return False
 
         return True
-    
+
     def _save_content(self, content: Dict[str, str]) -> None:
-        """
-        Save the content to a file.
-
-        Args:
-            content: The content dictionary containing title, content, and URL
-        """
-        # Create a filename from the URL
+        """Save the content to a file."""
         url_path = urlparse(content["url"]).path
-        filename = url_path.strip("/").replace("/", "_")
-
-        # If the filename is empty, use the domain
+        # Make filename safe for all OS
+        filename = url_path.strip("/").replace("/", "_").replace(".html", "")
         if not filename:
             filename = "index"
+        filepath = self.output_dir / f"{filename}.txt"
 
-        # Remove any invalid characters
-        filename = re.sub(r'[<>:"/\\|?*]', '_', filename)
-
-        # Add the .txt extension
-        filename = f"{filename}.txt"
-
-        # Create the full path
-        filepath = self.output_dir / filename
-
-        # Write the content to the file
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(f"Title: {content['title']}\n")
             f.write(f"URL: {content['url']}\n")
-            f.write(f"Source: openbis\n")  # Add source metadata for DS Helper
-            f.write(f"---\n\n")
+            f.write("Source: openbis\n")
+            f.write("---\n\n")
             f.write(content["content"])
 
         logger.info(f"Saved content to {filepath}")
     
     def scrape(self) -> None:
-        """
-        Scrape the ReadtheDocs site.
-        """
-        logger.info(f"Starting to scrape {self.base_url}")
-
+        """Scrape the ReadtheDocs site."""
+        logger.info(f"Starting to scrape {self.start_url}")
         pages_scraped = 0
 
         while self.urls_to_visit and (self.max_pages is None or pages_scraped < self.max_pages):
-            # Get the next URL to visit
             url = self.urls_to_visit.pop(0)
+            url_clean = urljoin(url, urlparse(url).path) # Normalize URL by removing fragment
 
-            # Skip if we've already visited this URL
-            if url in self.visited_urls:
+            if url_clean in self.visited_urls:
                 continue
 
-            logger.info(f"Scraping {url}")
+            logger.info(f"Scraping ({pages_scraped + 1}/{self.max_pages or 'all'}): {url_clean}")
 
             try:
-                # Make the request
-                response = requests.get(url, timeout=10)
-                response.raise_for_status()
+                response = requests.get(url_clean, timeout=10)
+                if response.status_code != 200:
+                    logger.warning(f"Skipping {url_clean} (Status code: {response.status_code})")
+                    self.visited_urls.add(url_clean)
+                    continue
 
-                # Mark the URL as visited
-                self.visited_urls.add(url)
-
-                # Extract the content
-                content = self.parser.extract_content(response.text, url)
-
-                # Save the content
+                self.visited_urls.add(url_clean)
+                content = self.parser.extract_content(response.text, url_clean)
                 self._save_content(content)
                 pages_scraped += 1
 
-                # Find links to other pages
+                ### REVISED: More robust link discovery and joining
                 soup = BeautifulSoup(response.text, "html.parser")
-                for link in soup.find_all("a", href=True):
+                # Target the main navigation sidebar for high-quality links
+                nav_sidebar = soup.find('nav', class_='wy-nav-side')
+                if not nav_sidebar:
+                    nav_sidebar = soup # Fallback to whole page if no sidebar found
+
+                for link in nav_sidebar.find_all("a", href=True):
                     href = link["href"]
+                    # Use the CURRENT page's URL as the base for the join
+                    absolute_url = urljoin(url_clean, href)
 
-                    # Skip empty links and anchors
-                    if not href or href.startswith("#"):
-                        continue
+                    if self._is_valid_url(absolute_url):
+                        if absolute_url not in self.urls_to_visit:
+                             self.urls_to_visit.append(absolute_url)
 
-                    # Always join with the base URL, stripping any leading slashes
-                    fixed_href = urljoin(
-                        self.base_url + "/", 
-                        href.lstrip("/")
-                    )
-
-                    # Ensure the URL starts with the correct base
-                    if not fixed_href.startswith(self.base_url):
-                        continue
-
-                    # Check if the URL is valid
-                    if self._is_valid_url(fixed_href):
-                        self.urls_to_visit.append(fixed_href)
-                        logger.debug(f"Added URL to queue: {fixed_href}")
-
-                # Add delay between requests
                 if self.delay > 0:
                     time.sleep(self.delay)
 
             except requests.RequestException as e:
-                logger.error(f"Error scraping {url}: {e}")
-                continue
-            except Exception as e:
-                logger.error(f"Unexpected error scraping {url}: {e}")
+                logger.error(f"Error scraping {url_clean}: {e}")
                 continue
 
         logger.info(f"Finished scraping. Scraped {pages_scraped} pages.")
